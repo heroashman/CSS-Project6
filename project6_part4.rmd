@@ -1,0 +1,326 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: console
+---
+
+## Question 4
+
+```{r, include = FALSE}
+rm(list = ls())
+
+# set up 
+
+library(tidyverse)
+library(data.table)
+library(here)
+library(MatchIt)
+library(cobalt)
+
+hawd <- "C:/Users/heroa/Google Drive/BerkeleyCourses/SOC273L/CSS-Project6-Team2/"
+setwd(hawd)
+
+d <- fread("data/ypsps.csv")
+head(d)
+colnames(d)
+
+
+```
+
+### 4.1: One Model
+The goal of propensity score matching is to achieve a balance between the treatment and control groups in variables that may explain selection into treatment. In the Kam and Palmer (2008) paper, they use more than 80 covariates to predict assignment to treatment (attending college). Henderson and Chatfield (2009) demonstrate that after matching students based on these 80+ covariates the balance between treatment and control groups actually gets worse (though improves on several key variables). Both sets of authors agree that there are a number of attributes that explain why some people go to college and others don't, and Kam and Palmer (2008) list out variables associated with each attribute on page 7. We select four variables from each attribute, plus four demographic variables, for a total of 20 covariates that we believe will predict college attendance. These are listed in the true_covars vector below.   
+
+```{r}
+
+true_covars <- c("student_GPA", "student_PubAff", "student_FamTalk", "student_Knowledge",
+                 "student_GovtOpinion", "student_LifeWish", "student_Trust", "student_StrOpinion",
+                 "student_Senate", "student_Govern", "student_Hobby", "student_YouthOrg",
+                 "parent_HHInc", "parent_Knowledge", "parent_Employ", "parent_EducHH",
+                 "student_Gen", "student_Race", "parent_Gen", "parent_Race")
+
+
+# alternative outcomes
+altoutcomevars <- c("student_vote", "student_meeting", "student_other", "student_button", 
+                 "student_money", "student_communicate", "student_demonstrate", "student_community")
+
+# covariates - exclude outcome vars, any vars from years after treatment
+# additionall exclude parent_GPHighSchoolPlacebo & parent_HHCollegePlacebo b/c sometimes missing
+covars <- colnames(select(d, -interviewid, -college, -student_ppnscal, -all_of(altoutcomevars), 
+                          -contains("198"), -contains("197"), 
+                          -parent_GPHighSchoolPlacebo, -parent_HHCollegePlacebo))
+
+# create dataframe without unnecessary covariates
+d_base <- select(d, college, student_ppnscal, all_of(true_covars))
+
+```
+
+We estimate the propensity score by regressing assignment to treatment (college) on our 20 covariates. This gives the probability that a student will be in the treatment or control group. The plot below confirms that the propensity scores are higher for people in the treatment group (those that went to college).   
+
+```{r}
+
+# estimate propensity scores
+ps_est <- glm(as.formula(paste('college ~', paste(true_covars, collapse='+'))),
+              family = binomial(), data = d)
+
+# look at propensity score across treatment and control groups
+d_base %>%
+  mutate(ps = predict(ps_est)) %>%
+  mutate(college = factor(college, labels = c("no college", "college"))) %>%
+  ggplot() +
+  geom_density(aes(x = ps, color = college)) +
+  theme_bw() +
+  labs(title = "Distribution of Propensity Score by Treatment")
+
+```
+
+#### Using MatchIt 
+
+Rather than manually matching observations based on their propensity score, we use the MatchIt package to calculate the propensity scores, re-weight the observations based on their propensity scores, and then estimate the average treatment effect on the treated (ATT).
+
+One problem is that there are fewer control units than treated units. We match with replacement so that each of our treated units can be matched to a control unit. A nearest neighbor match with k=1 results in about half our of control units not being matched. Increasing k to 3 means that more of our control units get matched to treatment units (because the threshold for a match is lower). **WHAT ARE THE CONSEQUENCES OF THIS DECISION**
+
+```{r}
+
+match_ps_att <- matchit(formula = as.formula(paste('college ~', paste(true_covars, collapse='+'))),
+                        data = d, method = "nearest", distance = "glm", link = "logit", estimand = "ATT", replace = TRUE, ratio = 3)
+summary(match_ps_att)
+
+# statistics to report
+
+# proportion of covariates that meet the standardized mean difference <= 0.1
+share_bal <- bal.tab(match_ps_att, thresholds = 0.1)$Balance %>%
+  transmute(balanced = 1*(M.Threshold == "Balanced, <0.1")) %>%
+  unlist() %>%
+  mean()
+ 
+# mean percent improvement in the standardized mean difference
+pct_improv <- summary(match_ps_att)$reduction[,1] %>%
+  mean()
+
+```
+
+#### Assessing Balance 
+
+The summary above shows the balance of our 20 covariates across the treatment and control groups for pre- and post-matching. The plot below shows the distribution of propensity scores by match type. We see that both treatment and control units with high propensity scores were the ones that got matched. This makes sense because we expect that the students who are most likely to go to college (regardless of whether they did or not) would be more similar to one another and so more likely to get matched. The unmatched control units were the ones with the lowest propensity scores. **IS THIS A PROBLEM? (This posses a problem for our analysis - we are throwing out students who did not go to college and who were least likely to go to college, because they are not a good comparison case. However, they probably contain useful information???)**   
+
+```{r}
+
+plot(match_ps_att, type = "jitter", interactive = FALSE)
+
+```
+
+The plot below shows the absolute standardized mean difference between the treatment and control groups before and after matching for each of our covariates. We see that matching has improved the overall balance, because fewer covariates have large differences between the means. Using a threshold of 0.1 to indicate balance, our matched model has 13 out of 21 balanced covariates (including the newly created distance variable as a covariate) - meaning that the proportion of balanced covariates is `r round(share_bal, 2)`. This compares to only 2 covariates that were balanced before matching. 
+
+```{r}
+plot(summary(match_ps_att))
+
+#bal.tab(match_ps_att, threshold = 0.1)
+
+# covariates that are balanced at the 0.1 threshold
+bal_covars <- c("student_GPA", "student_FamTalk", "student_GovtOpinion", "student_LifeWish", "student_Senate", "student_Govern", "parent_Employ", "student_Gen", "student_Race", "parent_Race")
+```
+
+Despite a large increase in the number of balanced covariates, matching did not improve the mean difference between control and treatment overall - shown in percent balance improvement table above. The mean percent improvement is `r round(pct_improv, 4)` - the negative percent indicates that it got worse. This is mainly due to the substantially worse balance for the student_PubAff variable.  
+
+```{r}
+
+summary(match_ps_att)$reduction
+
+```
+
+#### Estimating the ATT
+
+```{r}
+# estimate ATT 
+match_ps_att_data <- match.data(match_ps_att) 
+
+lm_ps_att <- lm(as.formula(paste('student_ppnscal ~ college +', paste(true_covars, collapse='+'))), 
+                data = match_ps_att_data, weights = weights)
+
+# store results
+lm_ps_att_summ <- summary(lm_ps_att)
+
+# ATT
+ATT_ps <- lm_ps_att_summ$coefficients["college", "Estimate"]
+
+# p-value for ATT
+ATT_pv <- lm_ps_att_summ$coefficients["college", "Pr(>|t|)"]
+
+```
+
+After matching using propensity scores and k-nearest neighbors, we used the weighted observations estimate the average treatment on the treated (ATT). The ATT is `r ATT_ps` and is significant at the 1% threshold. This indicates that going to college is associated with participating in nearly one more political activity later in life (for those that go to college). If the selection on observables assumption holds - that conditioning on these 20 covariates assignment to treatment is as good as randomly assigned - then we can interpret this as a causal relationship.   
+
+```{r}
+lm_ps_att_summ
+
+```
+
+
+### 4.2: Simulations 
+To investigate how sensitive the ATT estimate is to changes in the covariate specification, we run the propensity score model from above 10,000 times. Each time we randomly sample a subset of the 110 potential covariates from Henderson and Chatfield's list. The function below: 
+
+- randomly samples a subset of covariates
+- estimates the propensity score model using MatchIt
+- estimates the results ATT
+- records the ATT, the share of covariates that are balanced, and the mean percentage improvement in balance 
+
+
+```{r}
+
+# empty list for results
+results <- c()
+
+# set seed
+set.seed(1)
+
+# function for simulation 
+ps_match_sim <- function(save_model = FALSE){ 
+ 
+  # 1. randomly sample N covariates 
+  n = sample(1:length(covars),1)
+  covar_sample <- sample(covars, size = n)
+  
+  # 2. run match it 
+  match_model <- matchit(formula = as.formula(paste('college ~', paste(covar_sample, collapse='+'))),
+                         data = d, method = "nearest", distance = "glm", link = "logit", 
+                         estimand = "ATT", replace = TRUE, ratio = 3)
+  
+  # 3. calculate ATT 
+  match_data <- match.data(match_model) 
+  
+  lm_model <- lm(as.formula(paste('student_ppnscal ~ college +', paste(covar_sample, collapse='+'))), 
+                  data = match_data, weights = weights)
+  
+  # 4. store results 
+  # ATT
+  att <- summary(lm_model)$coefficients["college", "Estimate"]
+  results[1] = att  
+  
+  # p-value for ATT
+  att_pv <- summary(lm_model)$coefficients["college", "Pr(>|t|)"]
+  results[2] = att_pv
+  
+  # number of covariates (stored in n above)
+  results[3] = n
+  
+  # proportion of covariates that meet the standardized mean difference <= 0.1
+  share_bal <- bal.tab(match_model, thresholds = 0.1)$Balance %>%
+    transmute(balanced = 1*(M.Threshold == "Balanced, <0.1")) %>%
+    unlist() %>%
+    mean()
+  results[4] = share_bal
+   
+  # mean percent improvement in the standardized mean difference
+  pct_improv <- summary(match_model)$reduction[,1] %>%
+    mean()
+  results[5] = pct_improv
+  
+  results <- round(results, digits = 4)
+  
+  # if on, save all model attributes
+  if (save_model == TRUE){
+    
+    results = list(results,
+                        match_model)
+  }
+  
+  return(results)
+}
+```
+
+We run the above simulation 10,000 times (this takes A LONG TIME so only run 100 times for now) and create a dataframe with the returned results.  
+
+
+```{r}
+
+# run 10,000 times
+sim_results <- replicate(100, ps_match_sim(), simplify = TRUE)
+
+# THINK I ALSO NEED TO RETURN THE NUMBER OF BALANCED COVARIATES BEFORE THE MATCHING 
+
+# turn results into dataframe
+sim_df <- t(sim_results) %>%
+  data.frame(row.names = NULL)
+colnames(sim_df) <- c("att", "pvalue", "ncovars", "sharebal", "pctimprov")
+
+# output so don't need to re-run simulatoin 
+fwrite(sim_df, "part4_ps_simulation_results.csv")
+
+```
+
+
+The distribution of estimates for the ATT is shown below. Other than for the models that only had 1, 2 or 3 covariates, the p-value for the ATT was always less than 0.01, indicating that the estimate is significant at the 1% level. 
+
+```{r, echo = F}
+
+sim_df %>%
+  ggplot() +
+  geom_histogram(aes(x = att)) +
+  theme_bw() +
+  ggtitle("Distribution of ATTs")
+
+
+
+```
+
+The plot below shows the share of covariates that meet the balance threshold of 0.1 against the estimate for the average treatment on the treated. 
+
+```{r, echo = F}
+
+sim_df %>%
+  ggplot() +
+  geom_point(aes(x = att, y = sharebal)) +
+  theme_bw() +
+  labs(title = "Proportion of Balanced Covariates against ATT") +
+  ylab("Share") +
+  xlab("Average Treatment on the Treated")
+
+```
+
+The next plot shows the mean percentage increase in the balance of the covariates after matching (across all the covariates used in that simulation) against the estimate for the ATT. 
+
+```{r, echo = F}
+
+sim_df %>%
+  ggplot() +
+  geom_point(aes(x = att, y = pctimprov)) +
+  theme_bw() +
+  labs(title = "Mean Percent Improvement against ATT") +
+  ylab("Percent") +
+  xlab("Average Treatment on the Treated")
+
+```
+
+Finally, we show the number of covariates against the ATT. 
+
+```{r, echo = F}
+
+sim_df %>%
+  ggplot() +
+  geom_point(aes(x = att, y = ncovars)) +
+  theme_bw() +
+  labs(title = "Number of Covariates against ATT") +
+  ylab("Number") +
+  xlab("Average Treatment on the Treated")
+
+```
+
+We then select 10 models at random and show the covariate balance plots for each of the 10 models. 
+
+```{r}
+
+# run for 10 random one
+sim10 <- replicate(10, ps_match_sim(save_model = T), simplify = FALSE)
+
+plot(summary(sim10[[1]][[2]]))
+
+
+```
+
+
+### 4.3: Questions 
+
+
