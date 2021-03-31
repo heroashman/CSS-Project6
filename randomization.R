@@ -28,11 +28,6 @@ ggplot(ypsps, aes(x=parent_OwnHome))+
 
 
 
-
-ypsps %>% filter(A == "Control") %>% select(parent_OwnHome) %>% sum() /
-  ypsps %>% filter(A == "Treatment") %>% select(parent_OwnHome) %>% sum()
-
-
 # Simulate first two steps 10,000 times (monte carlo simulation - see R Refresher for a hint)
 
 
