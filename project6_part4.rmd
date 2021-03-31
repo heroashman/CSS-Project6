@@ -20,8 +20,10 @@ library(here)
 library(MatchIt)
 library(cobalt)
 
-hawd <- "C:/Users/heroa/Google Drive/BerkeleyCourses/SOC273L/CSS-Project6-Team2/"
-setwd(hawd)
+#hawd <- "C:/Users/heroa/Google Drive/BerkeleyCourses/SOC273L/CSS-Project6-Team2/"
+#setwd(hawd)
+
+
 
 d <- fread("data/ypsps.csv")
 head(d)
@@ -170,6 +172,68 @@ To investigate how sensitive the ATT estimate is to changes in the covariate spe
 - records the ATT, the share of covariates that are balanced, and the mean percentage improvement in balance 
 
 
+```{r paul try}
+#set simulation parameters
+set.seed(1)
+iters <- 10000
+
+#generate random selection of covars
+n <- sample(1:length(covars), iters, replace = TRUE)
+covar_sample <- sapply(n, function(x) sample(covars, size = x))
+
+
+#store results as a matrix (converting to data frame kept crashing my computer :/)
+# first column is att
+# second is p-value
+# third is balance proportion
+# fourth is percent improvement
+
+results <- t(mapply(function(x,y) 
+    list(
+      # grabs lm parameters using hero's code (i love it!! so brilliant)
+      summary(lm(as.formula(paste('student_ppnscal ~ college +', paste(x, collapse='+'))), 
+                  data = match.data(y), weights = weights))$coefficients["college", "Estimate"],
+      
+      
+      summary(lm(as.formula(paste('student_ppnscal ~ college +', paste(x, collapse='+'))), 
+                  data = match.data(y), weights = weights))$coefficients["college", "Pr(>|t|)"],
+      
+      
+      # balance proportion   
+    bal.tab(y, thresholds = 0.1)$Balance %>%
+    transmute(balanced = 1*(M.Threshold == "Balanced, <0.1")) %>%
+    unlist() %>%
+    mean(),
+    
+    
+      #percent improvement
+    
+    summary(y)$reduction[,1] %>% mean()
+    
+    ), 
+    
+    
+    #data x referred to above
+    
+    covar_sample, 
+    
+    #data y
+    lapply(covar_sample, function(z) suppressWarnings(matchit(formula = as.formula(paste('college ~', 
+                                                                                         paste(z, collapse='+'))),
+                         data = d, method = "nearest", distance = "glm", link = "logit", 
+                         estimand = "ATT", replace = TRUE, ratio = 3)))
+))
+
+results <- cbind(results, n)
+colnames(results) <- c("att", "pvalue", "sharebal", "pctimprov", "ncovars")
+
+# save results
+# saveRDS(results, "part4_ps_simulation_results_10000.rds")
+
+```
+
+
+
 ```{r}
 
 # empty matrix for results
@@ -268,13 +332,15 @@ The distribution of estimates for the ATT is shown below, with our "true" ATT sh
 
 ```{r, echo = F}
 
-sim_df %>%
+
+#results %>%
   ggplot() +
-  geom_histogram(aes(x = att)) +
+  geom_histogram(aes(x = unlist(results[,1]))) +
   theme_bw() +
   ggtitle("Distribution of ATTs",
           subtitle = "'True' model shown in red") +
-  geom_vline(xintercept = ATT_ps, color = "red")
+  geom_vline(xintercept = ATT_ps, color = "red") + 
+  xlab("simulated value")
 
 
 
@@ -284,9 +350,9 @@ The plot below shows the share of covariates that meet the balance threshold of 
 
 ```{r, echo = F}
 
-sim_df %>%
+#sim_df %>%
   ggplot() +
-  geom_point(aes(y = att, x = sharebal)) +
+  geom_point(aes(y = unlist(results[,1])), x = unlist(results[,3])) +
   theme_bw() +
   labs(title = "ATT against Proportion of Balanced Covariates",
        subtitle = "'True' model shown in red") +
@@ -301,11 +367,11 @@ The next plot shows the mean percentage increase in the balance of the covariate
 
 ```{r, echo = F}
 
-sim_df %>%
+#sim_df %>%
   ggplot() +
-  geom_point(aes(x = pctimprov, y = att)) +
+  geom_point(aes(x = unlist(results[,4]), y = unlist(results[,1]))) +
   theme_bw() +
-  labs(title = "ATT again Mean Percent Improvement",
+  labs(title = "ATT against Mean Percent Improvement",
        subtitle = "'True' model shown in red") +
   xlab("Percent") +
   ylab("Average Treatment on the Treated") +
@@ -318,11 +384,11 @@ Finally, we show the number of covariates against the ATT. This plot does sugges
 
 ```{r, echo = F}
 
-sim_df %>%
+#sim_df %>%
   ggplot() +
-  geom_point(aes(y = att, x = ncovars)) +
+  geom_point(aes(y = unlist(results[,1]), x = n)) +
   theme_bw() +
-  labs(title = "ATT again Number of Covariates",
+  labs(title = "ATT against Number of Covariates",
        subtitle = "'True' model shown in red") +
   xlab("Number") +
   ylab("Average Treatment on the Treated") +
