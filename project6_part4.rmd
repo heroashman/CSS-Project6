@@ -13,21 +13,18 @@ editor_options:
 rm(list = ls())
 
 # set up 
+library(pacman)
+p_load(tidyverse, data.table, here, MatchIt, cobalt)
 
-library(tidyverse)
-library(data.table)
-library(here)
-library(MatchIt)
-library(cobalt)
-
-#hawd <- "C:/Users/heroa/Google Drive/BerkeleyCourses/SOC273L/CSS-Project6-Team2/"
-#setwd(hawd)
-
-
+hawd <- "C:/Users/heroa/Google Drive/BerkeleyCourses/SOC273L/CSS-Project6-Team2/"
+setwd(hawd)
 
 d <- fread("data/ypsps.csv")
 head(d)
 colnames(d)
+
+# SET TO TRUE IF RE-RUNNING SIMILATION OR FALSE IS NOT
+RUNSIM <- FALSE
 
 
 ```
@@ -88,7 +85,7 @@ One problem is that there are fewer control units than treated units. We match w
 
 match_ps_att <- matchit(formula = as.formula(paste('college ~', paste(true_covars, collapse='+'))),
                         data = d, method = "nearest", distance = "glm", link = "logit", estimand = "ATT", replace = TRUE, ratio = 3, caliper = 0.25)
-summary(match_ps_att)
+#summary(match_ps_att)
 
 # statistics to report
 
@@ -106,7 +103,7 @@ pct_improv <- summary(match_ps_att)$reduction[,1] %>%
 
 #### Assessing Balance 
 
-The summary above shows the balance of our 20 covariates across the treatment and control groups for pre- and post-matching. The plot below shows the distribution of propensity scores by match type. There is a large enough region of common support that all of the treatment units get matched to a control unit. At the top of the propensity score distribution, a few matched units are getting matched many times to different treatment units (shown by the large circles). This is a case of extremity bias that Henderson and Chatfield point out as a problem with the Kam and Palmer paper.
+The plot below shows the distribution of propensity scores by match type. There is a large enough region of common support that all of the treatment units get matched to a control unit. At the top of the propensity score distribution, a few matched units are getting matched many times to different treatment units (shown by the large circles). This is a case of extremity bias that Henderson and Chatfield point out as a problem with the Kam and Palmer paper.
 
 The unmatched control units are the ones with the lowest propensity scores. These units will not be included in the model because, like never-takers, we can never observe their counterfactual of what would have happened if they did go to college. We will loose some statistical power from throwing out these units.
 
@@ -116,7 +113,7 @@ plot(match_ps_att, type = "jitter", interactive = FALSE)
 
 ```
 
-The plot below shows the absolute standardized mean difference between the treatment and control groups before and after matching for each of our covariates. We see that matching has improved the overall balance, because fewer covariates have large differences between the means. Using a threshold of 0.1 to indicate balance, our matched model has 13 out of 21 balanced covariates (including the newly created distance variable as a covariate) - meaning that the proportion of balanced covariates is `r round(share_bal, 2)`. This compares to only 2 covariates that were balanced before matching. 
+We also look at the balance of our 20 covariates across the treatment and control groups for pre- and post-matching. The plot below shows the absolute standardized mean difference between the treatment and control groups before and after matching for each of our covariates. We see that matching has improved the overall balance, because fewer covariates have large differences between the means. Using a threshold of 0.1 to indicate balance, our matched model has 13 out of 21 balanced covariates (including the newly created distance variable as a covariate) - meaning that the proportion of balanced covariates is `r round(share_bal, 2)`. This compares to only 2 covariates that were balanced before matching. 
 
 ```{r}
 plot(summary(match_ps_att))
@@ -127,7 +124,7 @@ plot(summary(match_ps_att))
 bal_covars <- c("student_GPA", "student_FamTalk", "student_GovtOpinion", "student_LifeWish", "student_Senate", "student_Govern", "parent_Employ", "student_Gen", "student_Race", "parent_Race")
 ```
 
-Despite a large increase in the number of balanced covariates, matching did not improve the mean difference between control and treatment overall - shown in percent balance improvement table above. The mean percent improvement is `r round(pct_improv, 4)` - the negative percent indicates that it got worse. This is mainly due to the substantially worse balance for the student_PubAff variable.  
+The table below shows the percent improvement in balance for each of the covariates. Despite a large increase in the *number* of balanced covariates, matching did not improve the mean difference between control and treatment *overall.* The mean percent improvement is `r round(pct_improv, 4)` - the negative percent indicates that it got worse. This is mainly due to the substantially worse balance for the student_PubAff variable.  
 
 ```{r}
 
@@ -187,57 +184,134 @@ covar_sample <- sapply(n, function(x) sample(covars, size = x))
 # second is p-value
 # third is balance proportion
 # fourth is percent improvement
+# fifth is number of covariates 
 
-results <- t(mapply(function(x,y) 
-    list(
-      # grabs lm parameters using hero's code (i love it!! so brilliant)
-      summary(lm(as.formula(paste('student_ppnscal ~ college +', paste(x, collapse='+'))), 
-                  data = match.data(y), weights = weights))$coefficients["college", "Estimate"],
-      
-      
-      summary(lm(as.formula(paste('student_ppnscal ~ college +', paste(x, collapse='+'))), 
-                  data = match.data(y), weights = weights))$coefficients["college", "Pr(>|t|)"],
-      
-      
-      # balance proportion   
-    bal.tab(y, thresholds = 0.1)$Balance %>%
-    transmute(balanced = 1*(M.Threshold == "Balanced, <0.1")) %>%
-    unlist() %>%
-    mean(),
-    
-    
-      #percent improvement
-    
-    summary(y)$reduction[,1] %>% mean()
-    
-    ), 
-    
-    
-    #data x referred to above
-    
-    covar_sample, 
-    
-    #data y
-    lapply(covar_sample, function(z) suppressWarnings(matchit(formula = as.formula(paste('college ~', 
-                                                                                         paste(z, collapse='+'))),
-                         data = d, method = "nearest", distance = "glm", link = "logit", 
-                         estimand = "ATT", replace = TRUE, ratio = 3)))
-))
+# only run once 
+if (RUNSIM == TRUE) {
 
-results <- cbind(results, n)
-colnames(results) <- c("att", "pvalue", "sharebal", "pctimprov", "ncovars")
+  results <- t(mapply(function(x,y) 
+      list(
+        # grabs lm parameters using hero's code (i love it!! so brilliant)
+        summary(lm(as.formula(paste('student_ppnscal ~ college +', paste(x, collapse='+'))), 
+                    data = match.data(y), weights = weights))$coefficients["college", "Estimate"],
+        
+        
+        summary(lm(as.formula(paste('student_ppnscal ~ college +', paste(x, collapse='+'))), 
+                    data = match.data(y), weights = weights))$coefficients["college", "Pr(>|t|)"],
+        
+        
+        # balance proportion   
+      bal.tab(y, thresholds = 0.1)$Balance %>%
+      transmute(balanced = 1*(M.Threshold == "Balanced, <0.1")) %>%
+      unlist() %>%
+      mean(),
+      
+      
+        #percent improvement
+      
+      summary(y)$reduction[,1] %>% mean()
+      
+      ), 
+      
+      
+      #data x referred to above
+      
+      covar_sample, 
+      
+      #data y
+      lapply(covar_sample, function(z) suppressWarnings(matchit(formula = as.formula(paste('college ~', 
+                                                                                           paste(z, collapse='+'))),
+                           data = d, method = "nearest", distance = "glm", link = "logit", 
+                           estimand = "ATT", replace = TRUE, ratio = 3)))
+  ))
+  
+  results <- cbind(results, n)
+  colnames(results) <- c("att", "pvalue", "sharebal", "pctimprov", "ncovars")
+  
+  # save results
+  saveRDS(results, "part4_ps_simulation_results_10000.rds")
+}
+if (RUNSIM == FALSE){
 
-# save results
-# saveRDS(results, "part4_ps_simulation_results_10000.rds")
+  results <- readRDS("part4_ps_simulation_results_10000.rds")
+  
+}
 
 ```
 
+We run the above simulation 10,000 times and save a matrix with the returned results.  
+
+The distribution of estimates for the ATT is shown below, with our "true" ATT shown in red. Other than for the models that only had 1, 2 or 3 covariates, the p-value for the ATT was always less than 0.01, indicating that the estimate is significant at the 1% level. The plot shows a slightly right skewed normal distribution of estimated ATTs, with our "true" estimate close to the mean. Our estimates for the ATT are clustered between K&P's estimate and H&C's estimates.  
+
+```{r, echo = F}
+
+
+#results %>%
+  ggplot() +
+  geom_histogram(aes(x = unlist(results[,1]))) +
+  theme_bw() +
+  ggtitle("Distribution of ATTs",
+          subtitle = "'True' model shown in red") +
+  geom_vline(xintercept = ATT_ps, color = "red") +
+  xlab("ATT")
+
+
+
+```
+
+The plot below shows the share of covariates that meet the balance threshold of 0.1 against the estimate for the average treatment on the treated. There is not any clear relationship between the share of balanced covariates and the estimated ATT. There does appear to be some bunching around particular shares of covariates. The plot does not show convergence of ATT like in the K&P paper, but this might be due to our lower number of simulations.  Our "true" model sits pretty squarely in the middle of the distribution of the share of balanced covariates.  
+
+```{r, echo = F}
+
+  ggplot() +
+  geom_point(aes(y = unlist(results[,1])), x = unlist(results[,3])) +
+  theme_bw() +
+  labs(title = "ATT against Proportion of Balanced Covariates",
+       subtitle = "'True' model shown in red") +
+  xlab("Share") +
+  ylab("Average Treatment on the Treated") +
+  geom_point(aes(y = ATT_ps, x = share_bal, color = "red")) +
+  theme(legend.position="none")
+
+```
+
+The next plot shows the mean percentage increase in the balance of the covariates after matching (across all the covariates used in that simulation) against the estimate for the ATT. The larger the improvement in the balance of covariates relative to the unmatched units the higher the ATT. Our "true" model had a relatively low degree of mean improvement from matching, mainly driven by one covariate that became very unbalanced after matching. 
+
+```{r, echo = F}
+
+  ggplot() +
+  geom_point(aes(x = unlist(results[,4]), y = unlist(results[,1]))) +
+  theme_bw() +
+  labs(title = "ATT against Mean Percent Improvement",
+       subtitle = "'True' model shown in red") +
+  xlab("Percent") +
+  ylab("Average Treatment on the Treated") +
+  geom_point(aes(x = pct_improv, y = ATT_ps, color = "red")) +
+  theme(legend.position="none")
+
+```
+
+Finally, we show the number of covariates against the ATT. This plot shows convergence toward an ATT of around 0.8 as the number of covariates increases. Interestingly, this is around the same value ATT we got from our "true" model, suggesting that increasing the number of covariates to match on does not improve the model relative to correctly specifying the covariates to match on.    
+
+```{r, echo = F}
+
+  ggplot() +
+  geom_point(aes(y = unlist(results[,1]), x = n)) +
+  theme_bw() +
+  labs(title = "ATT against Number of Covariates",
+       subtitle = "'True' model shown in red") +
+  xlab("Number") +
+  ylab("Average Treatment on the Treated") +
+  geom_point(aes(y = ATT_ps, x = 20, color = "red")) +
+  theme(legend.position="none")
+
+```
+
+#### Ten Example Simulations 
+We then select 10 models at random and show the covariate balance plots for each of the 10 models. Because some of the randomly selected models might use a large number of covariates that become difficult to show visually, select only five covariates to display for each model. The five that we select are the ones that appear most in the other 9 models, so that we can asses whether or not the balance improvement changes for covariate x when it is in a model with different other covaraites.  
 
 
 ```{r}
-
-# empty matrix for results
-#results <- matrix(, nrow = 10000, ncol = 5)
 
 # set seed
 set.seed(1)
@@ -288,131 +362,80 @@ ps_match_sim <- function(save_model = FALSE){
   
   results <- round(results, digits = 4)
   
-  # if on, save all model attributes
+  # if on, save all model attributes and list of covars
   if (save_model == TRUE){
     
     results = list(results,
-                        match_model)
+                   match_model,
+                   covar_sample)
   }
   
   return(results)
 }
 ```
 
-We run the above simulation 10,000 times and create a dataframe with the returned results.  
 
 ```{r}
 
-if (RUNSIM == TRUE) {
-
-  # run 10,000 times
-  sim_results <- replicate(5000, ps_match_sim(), simplify = TRUE)
-  
-  # turn results into dataframe
-  sim_df <- t(sim_results) %>%
-    data.frame(row.names = NULL)
-  colnames(sim_df) <- c("att", "pvalue", "ncovars", "sharebal", "pctimprov")
-  
-  # output so don't need to re-run simulation 
-  saveRDS(sim_df, "part4_ps_simulation_results.rds")
-}
-if (RUNSIM == FALSE){
-  
-  sim_df <- readRDS("part4_ps_simulation_results.rds")
-  #sim_df_2 <- readRDS("part4_ps_simulation_results_2.rds")
-  #sim_df <- cbind(sim_df, sim_df2)
-  
-}
-
-
-```
-
-
-The distribution of estimates for the ATT is shown below, with our "true" ATT shown in red. Other than for the models that only had 1, 2 or 3 covariates, the p-value for the ATT was always less than 0.01, indicating that the estimate is significant at the 1% level. The plot shows a slightly right skewed normal distribution of estimated ATTs, with our "true" estimate close to the mean. Our estimates for the ATT are clustered between K&P's estimate and H&C's estimates.  
-
-```{r, echo = F}
-
-
-#results %>%
-  ggplot() +
-  geom_histogram(aes(x = unlist(results[,1]))) +
-  theme_bw() +
-  ggtitle("Distribution of ATTs",
-          subtitle = "'True' model shown in red") +
-  geom_vline(xintercept = ATT_ps, color = "red") + 
-  xlab("simulated value")
-
-
-
-```
-
-The plot below shows the share of covariates that meet the balance threshold of 0.1 against the estimate for the average treatment on the treated. In general, as the number of balanced covariates increases, the estimated ATT increases. If we take balanced covariates to be a sign that matching has resulted in "as good as random assignment", this could indicate that the causal effect of college on political participation is actually larger. The plot does not show convergence of ATT like in the K&P paper, but this might be due to our lower number of simulations.  Our "true" model sits pretty squarely in the middle of the distribution of the share of balanced covariates.  
-
-```{r, echo = F}
-
-#sim_df %>%
-  ggplot() +
-  geom_point(aes(y = unlist(results[,1])), x = unlist(results[,3])) +
-  theme_bw() +
-  labs(title = "ATT against Proportion of Balanced Covariates",
-       subtitle = "'True' model shown in red") +
-  xlab("Share") +
-  ylab("Average Treatment on the Treated") +
-  geom_point(aes(y = ATT_ps, x = share_bal, color = "red")) +
-  theme(legend.position="none")
-
-```
-
-The next plot shows the mean percentage increase in the balance of the covariates after matching (across all the covariates used in that simulation) against the estimate for the ATT. The larger the improvement in the balance of covariates relative to the unmatched units the higher the ATT. This tracks with the previous plot because we expect that larger proportions of balanced covariates also means larger improvement. Our "true" model had a relatively low degree of mean improvement from matching, mainly driven by one covariate that became very unbalanced after matching. 
-
-```{r, echo = F}
-
-#sim_df %>%
-  ggplot() +
-  geom_point(aes(x = unlist(results[,4]), y = unlist(results[,1]))) +
-  theme_bw() +
-  labs(title = "ATT against Mean Percent Improvement",
-       subtitle = "'True' model shown in red") +
-  xlab("Percent") +
-  ylab("Average Treatment on the Treated") +
-  geom_point(aes(x = pct_improv, y = ATT_ps, color = "red")) +
-  theme(legend.position="none")
-
-```
-
-Finally, we show the number of covariates against the ATT. This plot does suggest convergence of the ATT as the number of covariates is increased.   
-
-```{r, echo = F}
-
-#sim_df %>%
-  ggplot() +
-  geom_point(aes(y = unlist(results[,1]), x = n)) +
-  theme_bw() +
-  labs(title = "ATT against Number of Covariates",
-       subtitle = "'True' model shown in red") +
-  xlab("Number") +
-  ylab("Average Treatment on the Treated") +
-  geom_point(aes(y = ATT_ps, x = 20, color = "red")) +
-  theme(legend.position="none")
-
-```
-
-#### Ten Example Simulations 
-We then select 10 models at random and show the covariate balance plots for each of the 10 models. 
-
-```{r}
-
-# FIND A NICE WAY TO DISPLAY THESE #
-
-# run for 10 random one
+# run 10 times
 sim10 <- replicate(10, ps_match_sim(save_model = T), simplify = FALSE)
 
-plot(summary(sim10[[10]][[2]]))
+# function to return df with covariate, pre- and post-absolute standardized mean differenace
+balance_plot <- function(i = 1){
+  
+  # number of covars + 1 
+  k <- length(sim10[[i]][[3]])+1
+
+  p_df <- data.frame(vars = sim10[[i]][[3]],
+                     dif_pre = unname(abs(summary(sim10[[i]][[2]])$sum.all[2:k,3])),
+                     dif_post = unname(abs(summary(sim10[[i]][[2]])$sum.matched[2:k,3])),
+                     sim = i,
+                     ncov = k-1)
+  
+  # take a sample of min(10,n) covars for plot
+  #s_size <- min(10, nrow(p_df))
+  #p_df <- sample_n(p_df, s_size)
+  
+  return(p_df)
+}
+
+# run for all 10 models
+df10 <- lapply(1:10, balance_plot) %>% bind_rows()
+
+# limit to 5 covariates per model based on overlap with other models 
+df10 <- df10 %>%
+  group_by(vars) %>%
+  mutate(freq = n()) %>%
+  group_by(sim) %>%
+  arrange(-freq, .by_gruop = TRUE) %>%
+  slice(1:5)
+
+
+# show balance plots for the 10 models
+ggplot(df10) +
+  geom_point(aes(x = dif_pre, y = vars, color = "pre")) +
+  geom_point(aes(x = dif_post, y = vars, color = "post")) +
+  geom_vline(xintercept = 0.1) +
+  xlab("Abs. Std. Mean Difference") +
+  ylab("") +
+  facet_wrap("sim", nrow = 2) +
+  theme_bw() +
+  labs(title = "Comparison of Balance for 10 Simulations",
+       caption = "Not all plots have all the covariates b/c they are randomly selected in each simulation.")
 
 
 ```
 
 
 ### 4.3: Questions 
+
+**1. How many simulations resulted in models with a higher proportion of balanced covariates? Do you have any concerns about this?**
+Our "true" model sat squarely in the middle of the simulations in terms of the share of balanced covariates. Given that the ATT did not change much with the share of balanced covariates, we are not concerned that our true model was more balanced than only half of the simulation models. The range of the share of balanced covariates was also not that large - the least balanced were around 56% and the most around 68%. 
+
+**2. Analyze the distribution of the ATTs. Do you have any concerns about this distribution?**
+The distribution of ATTs is roughly normal, with a slight right skew. The lower bound of the distribution is around 0.5, meaning none of our simulations produced an ATT as low as the one in K&P's paper. Looking at the distribution of the ATT against the number of covariates matched on shows some convergence toward an ATT of around 0.8, which is also what we estimated in our "true" model. The more covariates matched on, the less variance there is in the ATT estimate, which is good for precision. However, this does not preclude the possibility that all the estimates are biased. 
+
+**3. Do your 10 randomly chosen covariate balance plots produce similar numbers on the same covariates? Is it a concern if they do not?**
+Most of the covariate balance plots show similar numbers on the same covariates *post* matching. In general, covariates that were imbalanced before matching and balanced after matching display this trend regardless of the model they're in. This is encouraging because it implies that the treatment and control groups have similar characteristics across the different models post matching. If they did not have similar balance plots across models it would suggest that observations were being matched differently depending on the combination of covariates that are matched on. If an observation can get matched differently across models then it is like saying there are multiple counterfactuals for one observation and we would probably have an imprecisely estimated ATT.     
 
 
