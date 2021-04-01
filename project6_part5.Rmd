@@ -191,7 +191,7 @@ ps_match_sim <- function(save_model = FALSE){
   # 3. calculate ATT 
   match_data <- match.data(match_model) 
   
-  lm_model <- lm(as.formula(paste('college ~', paste(covar_sample, collapse='+'))), 
+  lm_model <- lm(as.formula(paste('student_ppnscal ~ college +', paste(covar_sample, collapse='+'))), 
                   data = match_data, weights = weights)
   
   # 4. store results 
@@ -315,7 +315,7 @@ We then select 10 models at random and show the covariate balance plots for each
 # run for 10 random one
 sim10 <- replicate(10, ps_match_sim(save_model = T), simplify = FALSE)
 
-plot(summary(sim10[[1]][[2]]))
+plot(summary(sim10[[1]][[2]], standardize = TRUE))
 
 
 ```
@@ -362,10 +362,7 @@ ps_match_sim <- function(save_model = FALSE){
   
   # 2. run match it 
   match_model <- matchit(formula = as.formula(paste('college ~', paste(covar_sample, collapse='+'))),
-                         data = d %>% 
-                           select_at(c("college", "student_ppnscal", covar_sample)) %>%
-                           filter_all(all_vars(!is.na(.))), 
-                         method = "genetic", distance = "logit",
+                         data = d, method = "genetic", distance = "glm", link = "logit",
                          estimand = "ATT", replace = TRUE)
   
   # 3. calculate ATT 
@@ -409,9 +406,80 @@ ps_match_sim <- function(save_model = FALSE){
   return(results)
 }
 
-sim_test <- replicate(5, ps_match_sim(), simplify = TRUE)
+sim_test <- replicate(100, ps_match_sim(), simplify = TRUE)
 ```
 
 ```{r}
-# Visualization for distributions of percent improvement
+ggplot() + 
+  geom_density(data = as.data.frame(sim_test[5,]) %>% 
+                 setNames("Percent Improvement"), 
+               aes(`Percent Improvement`), 
+               fill = "lightblue", alpha = 0.5) +
+  geom_density(data = as.data.frame(sim_results[5,]) %>%
+                 setNames("Percent Improvement"), 
+               aes(`Percent Improvement`), 
+               fill = "pink", alpha = 0.5)
+```
+
+```{r}
+# empty list for results
+results <- c()
+
+# set seed
+set.seed(1)
+
+# function for simulation 
+ps_match_sim_dt <- function(save_model = FALSE){ 
+ 
+  # 1. randomly sample N covariates 
+  n = sample(1:length(covars),1)
+  covar_sample <- sample(covars, size = n)
+  
+  # 2. run match it 
+  match_model <- matchit(formula = as.formula(paste('college ~', paste(covar_sample, collapse='+'))),
+                         data = d, method = "nearest", distance = "rpart", link = "logit",
+                         estimand = "ATT", replace = TRUE)
+  
+  # 3. calculate ATT 
+  match_data <- match.data(match_model) 
+  
+  lm_model <- lm(as.formula(paste('student_ppnscal ~ college +', paste(covar_sample, collapse='+'))), 
+                  data = match_data, weights = weights)
+  
+  # 4. store results 
+  # ATT
+  att <- summary(lm_model)$coefficients["college", "Estimate"]
+  results[1] = att  
+  
+  # p-value for ATT
+  att_pv <- summary(lm_model)$coefficients["college", "Pr(>|t|)"]
+  results[2] = att_pv
+  
+  # number of covariates (stored in n above)
+  results[3] = n
+  
+  # proportion of covariates that meet the standardized mean difference <= 0.1
+  share_bal <- bal.tab(match_model, thresholds = 0.1)$Balance %>%
+    transmute(balanced = 1*(M.Threshold == "Balanced, <0.1")) %>%
+    unlist() %>%
+    mean()
+  results[4] = share_bal
+   
+  # mean percent improvement in the standardized mean difference
+  pct_improv <- summary(match_model)$reduction[,1] %>%
+    mean()
+  results[5] = pct_improv
+  
+  results <- round(results, digits = 4)
+  
+  # if on, save all model attributes
+  if (save_model == TRUE){
+    results = list(results,
+                        match_model)
+  }
+  
+  return(results)
+}
+
+sim_dt <- replicate(100, ps_match_sim_dt(), simplify = TRUE)
 ```
