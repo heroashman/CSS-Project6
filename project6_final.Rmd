@@ -233,7 +233,7 @@ set.seed(1)
 iters <- 10000
 
 #generate random selection of covars
-n <- sample(1:length(covars), iters, replace = TRUE)
+n <- sample(2:length(covars), iters, replace = TRUE)
 covar_sample <- sapply(n, function(x) sample(covars, size = x))
 
 
@@ -243,6 +243,9 @@ covar_sample <- sapply(n, function(x) sample(covars, size = x))
 # third is balance proportion
 # fourth is percent improvement
 # fifth is number of covariates 
+
+
+saveRDS(results, "part4_ps_simulation_results_10000.rds")
 
 # only run once 
 if (RUNSIM == TRUE) {
@@ -280,7 +283,7 @@ if (RUNSIM == TRUE) {
       lapply(covar_sample, function(z) suppressWarnings(matchit(formula = as.formula(paste('college ~', 
                                                                                            paste(z, collapse='+'))),
                            data = d, method = "nearest", distance = "glm", link = "logit", 
-                           estimand = "ATT", replace = TRUE, ratio = 3)))
+                           estimand = "ATT", replace = TRUE, ratio = 3, caliper = 0.25)))
   ))
   
   results <- cbind(results, n)
