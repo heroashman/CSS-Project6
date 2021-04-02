@@ -68,15 +68,34 @@ results <- rep(0, 10000)
 
 # Calculate ratio of control to treatment for each randomization iteration and store in results
 results <- apply(randomizations, 2, function(x) 
-  d %>% filter(x == 0) %>% select(parent_OwnHome) %>% sum() /
-    d %>% filter(x == 1) %>% select(parent_OwnHome) %>% sum())
+  list(d %>% filter(x == 1) %>% select(parent_OwnHome) %>% sum() /
+    d %>% filter(x == 0) %>% select(parent_OwnHome) %>% sum(), 
+    
+    d %>% filter(x == 1) %>% select(parent_OwnHome) %>% -1 %>% sum() %>% abs() /
+    d %>% filter(x == 0) %>% select(parent_OwnHome) %>% -1 %>% sum() %>% abs()
+    
+    ))
 
-plot(density(results), main = "Density")
+# Turn into dataframe and give column names
+results <- data.frame(t(matrix(unlist(results), nrow = 2, ncol = 10000)))
+colnames(results) <- c("Covariate == 1", "Covariate == 0")
+
+
+# Plotting both densities 
+p <- ggplot(reshape2::melt(results),aes(x=value, fill=variable)) + geom_density(alpha = 0.25)
+  + xlab("Ratio of treatment to control on homeownership") 
+
+p + ggtitle("Density of 10k simulated ratios") + labs()
+
+
+  
 ```
 
 ### 3.1: Questions 
 
 **1. **
+For both values of the binary covariate (whether the parent owned their home or not), the ratio of the units between the randomized treatment and control seemed to center around 1. This indicates that on average, independence of the treatment assignment and baseline covariates does result in covariate balance across exposures. However, because assignment is a process, covariate balance is not always guaranteed despite its independence. It is possible to draw a sample, for instance, that is in the tails and outside of the 0.1 balance threshold. Furthermore, as exemplified by the covariate that we chose for this simulation, imbalance in the covariate itself also affects the likelihood of a balanced draw. Because many more units had a value of 1 rather than 0, the balance on the latter is more spread out in the simulations than the former. Thus, matching could still be useful even in completely randomized studies. 
+
 
 ## Question 4
 
@@ -214,7 +233,7 @@ set.seed(1)
 iters <- 10000
 
 #generate random selection of covars
-n <- sample(1:length(covars), iters, replace = TRUE)
+n <- sample(2:length(covars), iters, replace = TRUE)
 covar_sample <- sapply(n, function(x) sample(covars, size = x))
 
 
@@ -224,6 +243,9 @@ covar_sample <- sapply(n, function(x) sample(covars, size = x))
 # third is balance proportion
 # fourth is percent improvement
 # fifth is number of covariates 
+
+
+saveRDS(results, "part4_ps_simulation_results_10000.rds")
 
 # only run once 
 if (RUNSIM == TRUE) {
@@ -261,7 +283,7 @@ if (RUNSIM == TRUE) {
       lapply(covar_sample, function(z) suppressWarnings(matchit(formula = as.formula(paste('college ~', 
                                                                                            paste(z, collapse='+'))),
                            data = d, method = "nearest", distance = "glm", link = "logit", 
-                           estimand = "ATT", replace = TRUE, ratio = 3)))
+                           estimand = "ATT", replace = TRUE, ratio = 3, caliper = 0.25)))
   ))
   
   results <- cbind(results, n)
