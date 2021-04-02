@@ -494,9 +494,9 @@ gen_pct_improv <- summary(match_gen_att)$reduction[,1] %>%
   mean()
 ```
 
-This model performs somewhat better than the baseline nearest-neighbor matching model with the same 20 covariates, with 76% of covariates balanced (compared with 62%), and a slightly more positive percent improvement in the standardized mean difference (-69% compared with -85%). Iteratively deriving optimal weights for each covariate via genetic matching produces a more balanced outcome.
+This model performs somewhat better than the baseline nearest-neighbor matching model with the same 20 covariates, with 76% of covariates balanced (compared with 62%), and a slightly more positive percent improvement in the standardized mean difference (-69% compared with -85%). Iteratively deriving optimal weights for each covariate via genetic matching produces a more balanced outcome for this set of covariates.
 
-The computational burden of genetic matching precludes 10,000 simulations, as each individual match can take several minutes to run. We produce 500 simulations using the genetic matching algorithm, which we then compare with the 10,000 simulations previously produced using the nearest-neighbor approach.
+The computational burden of genetic matching precludes 10,000 simulations, as each individual match can take several minutes to run. We produce 500 simulations using the genetic matching algorithm, which we then compare with the 10,000 simulations previously produced using the nearest-neighbor approach. In order to perform 500 simulations, we also restrict the maximum number of covariates used in any given simulation to 30, as each additional variable contributes substantially to processing time. These model results are ultimately compared with the results for only those simulations from the intial propensity score matching that used 30 or fewer covariates.
 
 ```{r}
 #set simulation parameters
@@ -570,11 +570,184 @@ if (RUNSIM == FALSE){
 }
 ```
 
-Genetic matching consistently produces models in which a greater share of the covariates are balanced (__%), relative to the nearest-neighbor matching where the median share of balanced covariates was 66.67%.
+#### ATT for Genetic Matching 
+
+```{r, echo = F}
+#results %>%
+  ggplot() +
+  geom_histogram(aes(x = unlist(gen_results[,1]))) +
+  theme_bw() +
+  ggtitle("Distribution of ATTs",
+          subtitle = "'True' model shown in red") +
+  geom_vline(xintercept = ATT_ps, color = "red") +
+  xlab("ATT")
+```
+
+```{r, echo = F}
+  ggplot() +
+  geom_point(aes(y = unlist(gen_results[,1])), x = unlist(gen_results[,3])) +
+  theme_bw() +
+  labs(title = "ATT against Proportion of Balanced Covariates",
+       subtitle = "'True' model shown in red") +
+  xlab("Share") +
+  ylab("Average Treatment on the Treated") +
+  geom_point(aes(y = ATT_ps, x = share_bal, color = "red")) +
+  theme(legend.position="none")
+
+```
+
+```{r, echo = F}
+  ggplot() +
+  geom_point(aes(x = unlist(gen_results[,4]), y = unlist(gen_results[,1]))) +
+  theme_bw() +
+  labs(title = "ATT against Mean Percent Improvement",
+       subtitle = "'True' model shown in red") +
+  xlab("Percent") +
+  ylab("Average Treatment on the Treated") +
+  geom_point(aes(x = pct_improv, y = ATT_ps, color = "red")) +
+  theme(legend.position="none")
+```
+
+
+```{r, echo = F}
+  ggplot() +
+  geom_point(aes(y = unlist(gen_results[,1]), x = n)) +
+  theme_bw() +
+  labs(title = "ATT against Number of Covariates",
+       subtitle = "'True' model shown in red") +
+  xlab("Number") +
+  ylab("Average Treatment on the Treated") +
+  geom_point(aes(y = ATT_ps, x = 20, color = "red")) +
+  theme(legend.position="none")
+```
+
+#### Ten Example Simulations (Genetic Matching)
+
+```{r}
+# set seed
+set.seed(1)
+
+# function for simulation 
+gen_match_sim <- function(save_model = FALSE){ 
+ 
+  # 1. randomly sample N covariates 
+  #n = sample(1:length(covars),1)
+  n = sample(2:30, 1)
+  covar_sample <- sample(covars, size = n)
+  
+  # 2. run match it 
+  match_model <- matchit(formula = as.formula(paste('college ~', paste(covar_sample, collapse='+'))),
+                         data = d, method = "genetic", distance = "glm", link = "logit", 
+                         estimand = "ATT", replace = TRUE, ratio = 3)
+  
+  # 3. calculate ATT 
+  match_data <- match.data(match_model) 
+  
+  lm_model <- lm(as.formula(paste('student_ppnscal ~ college +', paste(covar_sample, collapse='+'))), 
+                  data = match_data, weights = weights)
+  
+  # 4. store results 
+  results <- c()
+  
+  # ATT
+  att <- summary(lm_model)$coefficients["college", "Estimate"]
+  results[1] = att  
+  
+  # p-value for ATT
+  att_pv <- summary(lm_model)$coefficients["college", "Pr(>|t|)"]
+  results[2] = att_pv
+  
+  # number of covariates (stored in n above)
+  results[3] = n
+  
+  # proportion of covariates that meet the standardized mean difference <= 0.1
+  share_bal <- bal.tab(match_model, thresholds = 0.1)$Balance %>%
+    transmute(balanced = 1*(M.Threshold == "Balanced, <0.1")) %>%
+    unlist() %>%
+    mean()
+  results[4] = share_bal
+   
+  # mean percent improvement in the standardized mean difference
+  pct_improv <- summary(match_model)$reduction[,1] %>%
+    mean()
+  results[5] = pct_improv
+  
+  results <- round(results, digits = 4)
+  
+  # if on, save all model attributes and list of covars
+  if (save_model == TRUE){
+    
+    results = list(results,
+                   match_model,
+                   covar_sample)
+  }
+  
+  return(results)
+}
+```
+
+
+```{r, message=FALSE}
+if(RUNSIM == TRUE){
+  # run 10 times
+gen_sim10 <- replicate(10, gen_match_sim(save_model = T), simplify = FALSE)
+
+# function to return df with covariate, pre- and post-absolute standardized mean differenace
+gen_balance_plot <- function(i = 1){
+  
+  # number of covars + 1 
+  k <- length(gen_sim10[[i]][[3]])+1
+
+  p_df <- data.frame(vars = gen_sim10[[i]][[3]],
+                     dif_pre = unname(abs(summary(gen_sim10[[i]][[2]])$sum.all[2:k,3])),
+                     dif_post = unname(abs(summary(gen_sim10[[i]][[2]])$sum.matched[2:k,3])),
+                     sim = i,
+                     ncov = k-1)
+  
+  # take a sample of min(10,n) covars for plot
+  #s_size <- min(10, nrow(p_df))
+  #p_df <- sample_n(p_df, s_size)
+  
+  return(p_df)
+}
+
+# run for all 10 models
+gen_df10 <- lapply(1:10, gen_balance_plot) %>% bind_rows()
+
+# limit to 5 covariates per model based on overlap with other models 
+gen_df10 <- gen_df10 %>%
+  group_by(vars) %>%
+  mutate(freq = n()) %>%
+  group_by(sim) %>%
+  arrange(-freq, .by_gruop = TRUE) %>%
+  slice(1:5)
+
+# show balance plots for the 10 models
+ggplot(gen_df10) +
+  geom_point(aes(x = dif_pre, y = vars, color = "pre")) +
+  geom_point(aes(x = dif_post, y = vars, color = "post")) +
+  geom_vline(xintercept = 0.1) +
+  xlab("Abs. Std. Mean Difference") +
+  ylab("") +
+  facet_wrap("sim", nrow = 2) +
+  theme_bw() +
+  labs(title = "Comparison of Balance for 10 Genetic Matching Simulations",
+       caption = "Not all plots have all the covariates b/c they are randomly selected in each simulation.")
+}
+```
+
+**1. Does your alternative matching method have more runs with higher proportions of balanced covariates?**
+
+Genetic matching tend to produce models in which a somewhat lower median share of the covariates are balanced (80%), relative to the nearest-neighbor matching where the median share of balanced covariates for models with 30 covariates or fewer was 88.9%. Density plots reveal that a lower proportion of genetic matching models are have well-balanced covariates. It should be noted that the share of balanced covariates is much lower when including all simulated nearest-neighbor models (66.67%), but these are not directly comparable to the genetic matching models for which a maximum threshold of 30 covariates was applied.
 
 ```{r, echo = FALSE}
+median(as.numeric(as.data.frame(results) %>% filter(ncovars <= 30) %>% pull(sharebal)))
+#median(as.numeric(as.data.frame(results)$sharebal))
+median(as.numeric(as.data.frame(gen_results)$sharebal))
+
 ggplot() + 
   geom_density(data = as.data.frame(results) %>%
+                 filter(ncovars <= 30) %>%
                  mutate(`Share Balanced` = as.numeric(sharebal)), 
                aes(`Share Balanced`), 
                fill = "lightblue", alpha = 0.5) +
@@ -584,12 +757,18 @@ ggplot() +
                fill = "pink", alpha = 0.5)
 ```
 
+**2. Use a visualization to examine the change in the distribution of the percent improvement in balance in propensity score match- ing vs. the distribution of the percent improvement in balance in your new method. Which did better? Analyze the results in 1-2 sentences.**
 
-Plotting the percent improvement in the simulated models based on genetic matching similarly reveals that genetic matching consistently performs better than nearest-neighbor matching.
+Plotting the percent improvement in the simulated models based on genetic matching similarly reveals that genetic matching consistently performs somewhat worse than ordinary nearest-neighbor matching, with a median percent improvement of 34.4%, for genetic matching compared to 54.6% for nearest-neighbor. Again, both performed significantly better than the body of simulations including any number of covariates, for which the median percent improvement was -5.84%.
 
 ```{r, echo = FALSE}
+median(as.numeric(as.data.frame(results) %>% filter(ncovars <= 30) %>% pull(pctimprov)))
+#median(as.numeric(as.data.frame(results)$pctimprov))
+median(as.numeric(as.data.frame(gen_results)$pctimprov))
+
 ggplot() + 
   geom_density(data = as.data.frame(results) %>%
+                 filter(ncovars <= 30) %>%
                  mutate(`Percent Improvement` = as.numeric(pctimprov)), 
                aes(`Percent Improvement`), 
                fill = "lightblue", alpha = 0.5) +
@@ -598,4 +777,122 @@ ggplot() +
                aes(`Percent Improvement`), 
                fill = "pink", alpha = 0.5)
 ```
+
+The reason for genetic matching performing worse in these scenarios is somewhat unclear, running counter to expectations of improved performance for genetic matching. It may be somewhat attributable to the comparison of only models with 30 covariates or fewer. However, a much smaller number of simulations (50) without a ceiling placed on the total number of possible covariates still suggests that the nearest-neighbor matching performs better overall (see below). Genetic matching performed better when using the 20 original covariates but does worse in the aggregate, perhaps reflecting the fact that genetic matching only works in particular contexts with particular sets of variables. A number of different matching strategies should be attempted in order to determine the approach that most improves the balance.
+
+```{r, message = FALSE}
+#set simulation parameters
+set.seed(1)
+iters <- 500
+
+#generate random selection of covars
+#n <- sample(1:length(covars), iters, replace = TRUE)
+n <- sample(2:length(covars), iters, replace = TRUE)
+covar_sample <- sapply(n, function(x) sample(covars, size = x))
+
+#store results as a matrix (converting to data frame kept crashing my computer :/)
+# first column is att
+# second is p-value
+# third is balance proportion
+# fourth is percent improvement
+# fifth is number of covariates 
+
+# only run once 
+if (RUNSIM == TRUE) {
+
+  for(loop in 1:(iters/10)){
+    cat(loop)
+    gen_full_results_temp <- t(mapply(function(x,y) 
+      list(
+        # grabs lm parameters using hero's code (i love it!! so brilliant)
+        summary(lm(as.formula(paste('student_ppnscal ~ college +', paste(x, collapse='+'))), 
+                    data = match.data(y), weights = weights))$coefficients["college", "Estimate"],
+        
+        summary(lm(as.formula(paste('student_ppnscal ~ college +', paste(x, collapse='+'))), 
+                    data = match.data(y), weights = weights))$coefficients["college", "Pr(>|t|)"],
+        
+        # balance proportion   
+      bal.tab(y, thresholds = 0.1)$Balance %>%
+      transmute(balanced = 1*(M.Threshold == "Balanced, <0.1")) %>%
+      unlist() %>%
+      mean(),
+      
+        #percent improvement
+      summary(y)$reduction[,1] %>% mean(),
+      length(x)
+      ), 
+      
+      #data x referred to above
+      covar_sample[(loop*10-9):(loop*10)], 
+      
+      #data y
+      mclapply(covar_sample[(loop*10-9):(loop*10)], 
+               function(z) suppressWarnings(matchit(formula = as.formula(paste('college ~', paste(z, collapse='+'))),
+                           data = d %>% select_at(c("college", "student_ppnscal", z)), 
+                           method = "genetic", distance = "glm", link = "logit", 
+                           estimand = "ATT", replace = TRUE, ratio = 3, caliper = 0.25)),
+             mc.cores = getOption("mc.cores", 4L))
+      ))
+    if(exists("gen_full_results")){
+      gen_full_results <<- rbind(gen_full_results, gen_full_results_temp)
+    } else {
+      gen_full_results <<- gen_full_results_temp
+    }
+  }
+
+  colnames(gen_full_results) <- c("att", "pvalue", "sharebal", "pctimprov", "ncovars")
+  
+  # save results
+  saveRDS(gen_full_results, "part5_ps_simulation_results_50.rds")
+}
+if (RUNSIM == FALSE){
+
+  gen_full_results <- readRDS("part5_ps_simulation_results_50.rds")
+  
+}
+
+median(as.numeric(as.data.frame(results)$sharebal))
+median(as.numeric(as.data.frame(gen_full_results)$sharebal))
+
+ggplot() + 
+  geom_density(data = as.data.frame(results) %>%
+                 mutate(`Share Balanced` = as.numeric(sharebal)), 
+               aes(`Share Balanced`), 
+               fill = "lightblue", alpha = 0.5) +
+  geom_density(data = as.data.frame(gen_full_results) %>%
+                 mutate(`Share Balanced` = as.numeric(sharebal)), 
+               aes(`Share Balanced`), 
+               fill = "pink", alpha = 0.5)
+
+median(as.numeric(as.data.frame(results)$pctimprov))
+median(as.numeric(as.data.frame(gen_full_results)$pctimprov))
+
+ggplot() + 
+  geom_density(data = as.data.frame(results) %>%
+                 mutate(`Percent Improvement` = as.numeric(pctimprov)), 
+               aes(`Percent Improvement`), 
+               fill = "lightblue", alpha = 0.5) +
+  geom_density(data = as.data.frame(gen_full_results) %>%
+                 mutate(`Percent Improvement` = as.numeric(pctimprov)), 
+               aes(`Percent Improvement`), 
+               fill = "pink", alpha = 0.5)
+```
+
+## Question 6
+
+**1. Why might it be a good idea to do matching even if we have a randomized or as-if-random design?**
+
+Given our findings from part 3, we know that randomization does not guarantee balance across covariates for any given sample. Matching is a way to correct for any imbalances that exist after randomization. While randomization gives us confidence that there isn’t selection bias, our estimates for the average treatment on the treated will vary with the characteristics of the treatment and the control. Further ensuring that the characteristics are balanced means that we can increase the precision of our estimates. We can think of this as producing the most appropriate counterfactual possible for each unit.
+
+**2. The standard way of estimating the propensity score is using a logistic regression to estimate probability of treatment. Given what we know about the curse of dimensionality, do you think there might be advantages to using other machine learning algorithms (decision trees, bagging/boosting forests, ensembles, etc.) to estimate propensity scores instead?**
+
+The curse of dimensionality refers to the problems associated with having increasing numbers of features without increasing numbers of observations. The more features you have the less likely it will be that you’ll have observations for each combination of those features. In exact matching, this is a problem because it might not be possible to match a treated unit with a specific combination of features with an untreated unit with that same combination of features. Calculating the propensity score is helpful here because instead of needing both treated and control units for each combination of features, each unit is given a “likelihood of treatment”, and treated units with a propensity score of p are matched to untreated units with a similar propensity score. 
+
+The standard way of estimating this propensity score is to use logistic regression, where the independent variables are covariates that are believed to affect the likelihood of treatment. The curse of dimensionality, however, can introduce problems with using logistic regression. There are two problem we identify: 
+
+The more features that we add to the RHS of the propensity score estimating, the less likely it is to estimate propensity scores closer to 0 or 1. Instead, a unit’s propensity for treatment becomes less distinguishable from every other unit's propensity for treatment. Therefore, logistic regression is more appropriate in settings with lower dimensionality where units can be more cleanly separated on their propensity for treatment. 
+Relatedly, units with similar propensity scores might actually be very different in terms of what their covariates look like. A certain combination of covariates might produce a propensity for treatment similar to a different combination of covariates. The likelihood of this increases with the number of features used to estimate the propensity score. The covariates across treatment and control will then not be balanced. 
+
+Instead of using logistic regression, you could use various machine learning algorithms, such as decision trees, which are non-parametric and so XXX. Using a decision tree, for example, could more cleanly separate out the units based on the propensity for treatment, as rather than assigning a continuous score it would sort units discreetly. Match would then look more like exact matching within the different categories estimated by the decision tree. We could also increase the precision of our estimates for the propensity score by using bagging/boosting forests because they average over multiple estimates. Another alternative would be to use dimension reduction techniques first and then estimate the propensity score using logistic regression on a reduced number of features. This could be helpful for downweighting or even eliminating covariates that do not affect selection into treatment. 
+
 
