@@ -68,15 +68,34 @@ results <- rep(0, 10000)
 
 # Calculate ratio of control to treatment for each randomization iteration and store in results
 results <- apply(randomizations, 2, function(x) 
-  d %>% filter(x == 0) %>% select(parent_OwnHome) %>% sum() /
-    d %>% filter(x == 1) %>% select(parent_OwnHome) %>% sum())
+  list(d %>% filter(x == 1) %>% select(parent_OwnHome) %>% sum() /
+    d %>% filter(x == 0) %>% select(parent_OwnHome) %>% sum(), 
+    
+    d %>% filter(x == 1) %>% select(parent_OwnHome) %>% -1 %>% sum() %>% abs() /
+    d %>% filter(x == 0) %>% select(parent_OwnHome) %>% -1 %>% sum() %>% abs()
+    
+    ))
 
-plot(density(results), main = "Density")
+# Turn into dataframe and give column names
+results <- data.frame(t(matrix(unlist(results), nrow = 2, ncol = 10000)))
+colnames(results) <- c("Covariate == 1", "Covariate == 0")
+
+
+# Plotting both densities 
+p <- ggplot(reshape2::melt(results),aes(x=value, fill=variable)) + geom_density(alpha = 0.25)
+  + xlab("Ratio of treatment to control on homeownership") 
+
+p + ggtitle("Density of 10k simulated ratios") + labs()
+
+
+  
 ```
 
 ### 3.1: Questions 
 
 **1. **
+For both values of the binary covariate (whether the parent owned their home or not), the ratio of the units between the randomized treatment and control seemed to center around 1. This indicates that on average, independence of the treatment assignment and baseline covariates does result in covariate balance across exposures. However, because assignment is a process, covariate balance is not always guaranteed despite its independence. It is possible to draw a sample, for instance, that is in the tails and outside of the 0.1 balance threshold. Furthermore, as exemplified by the covariate that we chose for this simulation, imbalance in the covariate itself also affects the likelihood of a balanced draw. Because many more units had a value of 1 rather than 0, the balance on the latter is more spread out in the simulations than the former. Thus, matching could still be useful even in completely randomized studies. 
+
 
 ## Question 4
 
