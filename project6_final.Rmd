@@ -13,7 +13,7 @@ rm(list = ls())
 
 # set up 
 library(pacman)
-p_load(tidyverse, data.table, here, MatchIt, cobalt, ggplot2, parallel)
+p_load(tidyverse, data.table, here, MatchIt, cobalt, ggplot2, parallel, reshape2)
 
 if(Sys.getenv("USER") == "alexramiller"){
   hawd <- "~/Git/CSS-Project6-Team2"
@@ -82,13 +82,10 @@ colnames(results) <- c("Covariate == 1", "Covariate == 0")
 
 
 # Plotting both densities 
-p <- ggplot(reshape2::melt(results),aes(x=value, fill=variable)) + geom_density(alpha = 0.25)
-  + xlab("Ratio of treatment to control on homeownership") 
+p <- ggplot(reshape2::melt(results),aes(x=value, fill=variable)) + geom_density(alpha = 0.25) +
+  xlab("Ratio of treatment to control on homeownership") 
 
 p + ggtitle("Density of 10k simulated ratios") + labs()
-
-
-  
 ```
 
 ### 3.1: Questions 
@@ -293,9 +290,15 @@ if (RUNSIM == TRUE) {
   saveRDS(results, "part4_ps_simulation_results_10000.rds")
 }
 if (RUNSIM == FALSE){
-
   results <- readRDS("part4_ps_simulation_results_10000.rds")
-  
+  if(ncol(results) == 4){
+    set.seed(1)
+    iters <- 10000
+    n <- sample(2:length(covars), iters, replace = TRUE)
+    covar_sample <- sapply(n, function(x) sample(covars, size = x))
+    results <- cbind(results, n)
+    colnames(results) <- c("att", "pvalue", "sharebal", "pctimprov", "ncovars")
+  }
 }
 
 ```
@@ -319,7 +322,7 @@ The plot below shows the share of covariates that meet the balance threshold of 
 
 ```{r, echo = F}
   ggplot() +
-  geom_point(aes(y = unlist(results[,1])), x = unlist(results[,3])) +
+  geom_point(aes(y = unlist(results[,1]), x = unlist(results[,3]))) +
   theme_bw() +
   labs(title = "ATT against Proportion of Balanced Covariates",
        subtitle = "'True' model shown in red") +
@@ -669,42 +672,42 @@ gen_match_sim <- function(save_model = FALSE){
                   data = match_data, weights = weights)
   
   # 4. store results 
-  results <- c()
+  gen_results <- c()
   
   # ATT
   att <- summary(lm_model)$coefficients["college", "Estimate"]
-  results[1] = att  
+  gen_results[1] = att  
   
   # p-value for ATT
   att_pv <- summary(lm_model)$coefficients["college", "Pr(>|t|)"]
-  results[2] = att_pv
+  gen_results[2] = att_pv
   
   # number of covariates (stored in n above)
-  results[3] = n
+  gen_results[3] = n
   
   # proportion of covariates that meet the standardized mean difference <= 0.1
   share_bal <- bal.tab(match_model, thresholds = 0.1)$Balance %>%
     transmute(balanced = 1*(M.Threshold == "Balanced, <0.1")) %>%
     unlist() %>%
     mean()
-  results[4] = share_bal
+  gen_results[4] = share_bal
    
   # mean percent improvement in the standardized mean difference
   pct_improv <- summary(match_model)$reduction[,1] %>%
     mean()
-  results[5] = pct_improv
+  gen_results[5] = pct_improv
   
-  results <- round(results, digits = 4)
+  gen_results <- round(gen_results, digits = 4)
   
   # if on, save all model attributes and list of covars
   if (save_model == TRUE){
     
-    results = list(results,
-                   match_model,
-                   covar_sample)
+    gen_results = list(gen_results,
+                       match_model,
+                       covar_sample)
   }
   
-  return(results)
+  return(gen_results)
 }
 ```
 
@@ -781,7 +784,7 @@ ggplot() +
 
 **2. Use a visualization to examine the change in the distribution of the percent improvement in balance in propensity score match- ing vs. the distribution of the percent improvement in balance in your new method. Which did better? Analyze the results in 1-2 sentences.**
 
-Plotting the percent improvement in the simulated models based on genetic matching similarly reveals that genetic matching consistently performs somewhat worse than ordinary nearest-neighbor matching, with a median percent improvement of 34.4%, for genetic matching compared to 54.6% for nearest-neighbor. Again, both performed significantly better than the body of simulations including any number of covariates, for which the median percent improvement was -5.84%.
+Plotting the percent improvement in the simulated models based on genetic matching similarly reveals that genetic matching consistently performs somewhat worse than ordinary nearest-neighbor matching, with a median percent improvement of 34.4%, for genetic matching compared to 54.8% for nearest-neighbor. Again, both performed significantly better than the body of simulations including any number of covariates, for which the median percent improvement was -5.84%.
 
 ```{r, echo = FALSE}
 median(as.numeric(as.data.frame(results) %>% filter(ncovars <= 30) %>% pull(pctimprov)))
