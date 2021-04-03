@@ -13,14 +13,17 @@ rm(list = ls())
 
 # set up 
 library(pacman)
-p_load(tidyverse, data.table, here, MatchIt, cobalt, ggplot2, parallel, reshape2)
+p_load(tidyverse, data.table, here, MatchIt, cobalt, ggplot2, parallel, reshape2, Matching, rgenoud)
 
 if(Sys.getenv("USER") == "alexramiller"){
   hawd <- "~/Git/CSS-Project6-Team2"
+  setwd(hawd)
+} else if (Sys.getenv("USER") == "paul") {
 } else {
   hawd <- "C:/Users/heroa/Google Drive/BerkeleyCourses/SOC273L/CSS-Project6-Team2/"
+  setwd(hawd)
 }
-setwd(hawd)
+
 
 d <- fread("data/ypsps.csv")
 head(d)
@@ -49,7 +52,10 @@ ggplot(d, aes(x=parent_OwnHome))+
   facet_grid(A ~ .)
 ```
 
+As we can see from these two plots, the distribution of this binary variable (whether the parent owned a home or not) is pretty similar across the treatment assignment.
+
 ```{r randomization simulation}
+
 # Simulate first two steps 10,000 times (monte carlo simulation - see R Refresher for a hint)
 iters <- 10000
 
@@ -61,8 +67,9 @@ randomizations <- matrix(rep(as.numeric(rbernoulli(n, p = 0.5))),
                          nrow = dim(d)[1], ncol = iters)
 
 # Drop the initial assignment
-d <- d %>% select(-A)
+d <- d %>% dplyr::select(-A)
 
+if (RUNSIM == TRUE) {
 # Initialize results vector (don't know if this is necessary since I use apply?)
 results <- rep(0, 10000)
 
@@ -80,6 +87,12 @@ results <- apply(randomizations, 2, function(x)
 results <- data.frame(t(matrix(unlist(results), nrow = 2, ncol = 10000)))
 colnames(results) <- c("Covariate == 1", "Covariate == 0")
 
+saveRDS(results, "part3_ps_simulation_results_10000.rds")
+} else {
+  
+results <- readRDS("part3_ps_simulation_results_10000.rds")  
+  
+}
 
 # Plotting both densities 
 p <- ggplot(reshape2::melt(results),aes(x=value, fill=variable)) + geom_density(alpha = 0.25) +
@@ -113,7 +126,7 @@ altoutcomevars <- c("student_vote", "student_meeting", "student_other", "student
 
 # covariates - exclude outcome vars, any vars from years after treatment
 # additional exclude parent_GPHighSchoolPlacebo & parent_HHCollegePlacebo b/c sometimes missing
-covars <- colnames(select(d, -interviewid, -college, -student_ppnscal, -all_of(altoutcomevars), 
+covars <- colnames(dplyr::select(d, -interviewid, -college, -student_ppnscal, -all_of(altoutcomevars), 
                           -contains("198"), -contains("197"), 
                           -parent_GPHighSchoolPlacebo, -parent_HHCollegePlacebo))
 
@@ -241,8 +254,6 @@ covar_sample <- sapply(n, function(x) sample(covars, size = x))
 # fourth is percent improvement
 # fifth is number of covariates 
 
-
-saveRDS(results, "part4_ps_simulation_results_10000.rds")
 
 # only run once 
 if (RUNSIM == TRUE) {
@@ -918,6 +929,6 @@ The standard way of estimating this propensity score is to use logistic regressi
 The more features that we add to the RHS of the propensity score estimating, the less likely it is to estimate propensity scores closer to 0 or 1. Instead, a unit’s propensity for treatment becomes less distinguishable from every other unit's propensity for treatment. Therefore, logistic regression is more appropriate in settings with lower dimensionality where units can be more cleanly separated on their propensity for treatment. 
 Relatedly, units with similar propensity scores might actually be very different in terms of what their covariates look like. A certain combination of covariates might produce a propensity for treatment similar to a different combination of covariates. The likelihood of this increases with the number of features used to estimate the propensity score. The covariates across treatment and control will then not be balanced. 
 
-Instead of using logistic regression, you could use various machine learning algorithms, such as decision trees, which are non-parametric and so XXX. Using a decision tree, for example, could more cleanly separate out the units based on the propensity for treatment, as rather than assigning a continuous score it would sort units discreetly. Match would then look more like exact matching within the different categories estimated by the decision tree. We could also increase the precision of our estimates for the propensity score by using bagging/boosting forests because they average over multiple estimates. Another alternative would be to use dimension reduction techniques first and then estimate the propensity score using logistic regression on a reduced number of features. This could be helpful for downweighting or even eliminating covariates that do not affect selection into treatment. 
+Instead of using logistic regression, you could use various machine learning algorithms, such as decision trees. These non-parametric algorithms might perform better in separating propensity mixtures in the units, if the assignment process is unlike many common functional forms (and difficult to model using logistic regression). Using a decision tree, for example, could more cleanly separate out the units based on the propensity for treatment, as rather than assigning a continuous score it would sort units discreetly. Match would then look more like exact matching within the different categories estimated by the decision tree. We could also increase the precision of our estimates for the propensity score by using bagging/boosting forests because they average over multiple estimates. Another alternative would be to use dimension reduction techniques first and then estimate the propensity score using logistic regression on a reduced number of features. This could be helpful for downweighting or even eliminating covariates that do not affect selection into treatment. 
 
 
