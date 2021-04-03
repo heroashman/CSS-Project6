@@ -609,13 +609,27 @@ if (RUNSIM == FALSE){
 #### ATT for Genetic Matching 
 
 ```{r, echo = F}
+# estimate ATT 
+match_gen_att_data <- match.data(match_gen_att) 
+
+lm_gen_att <- lm(as.formula(paste('student_ppnscal ~ college +', paste(true_covars, collapse='+'))), 
+                data = match_gen_att_data, weights = weights)
+
+# store results
+lm_gen_att_summ <- summary(lm_gen_att)
+
+# ATT
+ATT_gen <- lm_gen_att_summ$coefficients["college", "Estimate"]
+```
+
+```{r}
 #results %>%
   ggplot() +
   geom_histogram(aes(x = unlist(gen_results[,1]))) +
   theme_bw() +
   ggtitle("Distribution of ATTs",
           subtitle = "'True' model shown in red") +
-  geom_vline(xintercept = ATT_ps, color = "red") +
+  geom_vline(xintercept = ATT_gen, color = "red") +
   xlab("ATT")
 ```
 
@@ -627,7 +641,7 @@ if (RUNSIM == FALSE){
        subtitle = "'True' model shown in red") +
   xlab("Share") +
   ylab("Average Treatment on the Treated") +
-  geom_point(aes(y = ATT_ps, x = share_bal, color = "red")) +
+  geom_point(aes(y = ATT_gen, x = share_bal, color = "red")) +
   theme(legend.position="none")
 
 ```
@@ -640,7 +654,7 @@ if (RUNSIM == FALSE){
        subtitle = "'True' model shown in red") +
   xlab("Percent") +
   ylab("Average Treatment on the Treated") +
-  geom_point(aes(x = pct_improv, y = ATT_ps, color = "red")) +
+  geom_point(aes(x = pct_improv, y = ATT_gen, color = "red")) +
   theme(legend.position="none")
 ```
 
@@ -653,7 +667,7 @@ if (RUNSIM == FALSE){
        subtitle = "'True' model shown in red") +
   xlab("Number") +
   ylab("Average Treatment on the Treated") +
-  geom_point(aes(y = ATT_ps, x = 20, color = "red")) +
+  geom_point(aes(y = ATT_gen, x = 20, color = "red")) +
   theme(legend.position="none")
 ```
 
